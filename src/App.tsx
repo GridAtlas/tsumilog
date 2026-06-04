@@ -521,7 +521,7 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
           <button type="button" className={type === 'anime' ? 'active' : ''} onClick={() => { setType('anime'); setTotalAmount('') }}><Clapperboard size={18} /> アニメ</button>
           <button type="button" className={type === 'drama' ? 'active' : ''} onClick={() => { setType('drama'); setTotalAmount('') }}><Tv size={18} /> ドラマ</button>
         </div>
-        <label>タイトル<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="作品名を入力" autoFocus /></label>
+        <label>タイトル<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="作品名を入力" /></label>
         <label>{type === 'book' ? '著者' : type === 'game' ? 'プラットフォーム' : '配信サービスなど'}<input value={subtitle} onChange={(event) => setSubtitle(event.target.value)} placeholder={type === 'book' ? '著者名' : type === 'game' ? 'Steam / Switch など' : 'Netflix / TV など'} /></label>
         <label>{type === 'book' ? 'ページ数' : type === 'game' ? '想定クリア時間' : '全話数'}
           <input
