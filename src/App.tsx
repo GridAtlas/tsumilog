@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Bell,
   BookOpen,
@@ -11,10 +11,13 @@ import {
   Library,
   Plus,
   Search,
+  Settings,
   Sparkles,
+  Download,
   History,
   Trash2,
   Tv,
+  Upload,
   X,
 } from 'lucide-react'
 
@@ -50,6 +53,7 @@ type StoredItem = Partial<Item> & Pick<Item, 'id' | 'title' | 'subtitle' | 'type
 
 const DAY = 1000 * 60 * 60 * 24
 const storageKey = 'tsumilog-items'
+const exportVersion = 1
 
 const initialItems: Item[] = [
   {
@@ -121,11 +125,8 @@ const initialItems: Item[] = [
   },
 ]
 
-function loadItems() {
-  const saved = localStorage.getItem(storageKey)
-  if (!saved) return initialItems
-
-  return (JSON.parse(saved) as StoredItem[]).map((item) => {
+function normalizeItems(items: StoredItem[]) {
+  return items.map((item) => {
     const defaultTotal = item.type === 'book' ? 300 : item.type === 'game' ? 20 : 12
     const totalAmount = item.totalAmount ?? defaultTotal
     const currentAmount = item.currentAmount ?? Math.round(totalAmount * ((item.progress ?? 0) / 100))
@@ -137,6 +138,45 @@ function loadItems() {
       history: item.history ?? [],
     } as Item
   })
+}
+
+function loadItems() {
+  const saved = localStorage.getItem(storageKey)
+  if (!saved) return initialItems
+
+  try {
+    return normalizeItems(JSON.parse(saved) as StoredItem[])
+  } catch {
+    return initialItems
+  }
+}
+
+function isValidStoredItem(item: unknown): item is StoredItem {
+  if (!item || typeof item !== 'object') return false
+  const candidate = item as Partial<StoredItem>
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.title === 'string' &&
+    typeof candidate.subtitle === 'string' &&
+    ['book', 'game', 'anime', 'drama'].includes(candidate.type ?? '') &&
+    typeof candidate.purchasedAt === 'string' &&
+    typeof candidate.alertAfterDays === 'number' &&
+    typeof candidate.cover === 'string'
+  )
+}
+
+function parseImportedItems(data: unknown) {
+  const payload = Array.isArray(data)
+    ? data
+    : data && typeof data === 'object' && Array.isArray((data as { items?: unknown }).items)
+      ? (data as { items: unknown[] }).items
+      : null
+
+  if (!payload || !payload.every(isValidStoredItem)) {
+    throw new Error('invalid backup')
+  }
+
+  return normalizeItems(payload)
 }
 
 function dateDiff(date?: string) {
@@ -198,6 +238,7 @@ function App() {
   const [filter, setFilter] = useState<'all' | ItemType>('all')
   const [query, setQuery] = useState('')
   const [showAdd, setShowAdd] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [progressItem, setProgressItem] = useState<Item | null>(null)
   const [detailItemId, setDetailItemId] = useState<number | null>(null)
 
@@ -269,6 +310,11 @@ function App() {
     setDetailItemId(null)
   }
 
+  const importItems = (next: Item[]) => {
+    persist(next)
+    setShowSettings(false)
+  }
+
   const activeCount = items.filter((item) => item.status === 'active').length
   const completedCount = items.filter((item) => item.status === 'completed').length
   const detailItem = items.find((item) => item.id === detailItemId) ?? null
@@ -280,10 +326,15 @@ function App() {
           <p className="eyebrow">MY BACKLOG</p>
           <h1>積みログ</h1>
         </div>
-        <button className="icon-button" aria-label="通知" onClick={() => setTab('alerts')}>
-          <Bell size={20} />
-          {alerts.length > 0 && <span className="notification-dot" />}
-        </button>
+        <div className="topbar-actions">
+          <button className="icon-button" aria-label="通知" onClick={() => setTab('alerts')}>
+            <Bell size={20} />
+            {alerts.length > 0 && <span className="notification-dot" />}
+          </button>
+          <button className="icon-button" aria-label="設定" onClick={() => setShowSettings(true)}>
+            <Settings size={20} />
+          </button>
+        </div>
       </header>
 
       <main>
@@ -364,6 +415,7 @@ function App() {
       </nav>
 
       {showAdd && <AddSheet onClose={() => setShowAdd(false)} onAdd={addItem} />}
+      {showSettings && <SettingsSheet items={items} onClose={() => setShowSettings(false)} onImport={importItems} />}
       {detailItem && (
         <HistorySheet
           item={detailItem}
@@ -376,6 +428,74 @@ function App() {
         />
       )}
       {progressItem && <ProgressSheet item={progressItem} onClose={() => setProgressItem(null)} onSave={updateProgress} />}
+    </div>
+  )
+}
+
+function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: () => void; onImport: (items: Item[]) => void }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [message, setMessage] = useState('')
+
+  const exportItems = () => {
+    const backup = {
+      app: 'tsumilog',
+      version: exportVersion,
+      exportedAt: new Date().toISOString(),
+      items,
+    }
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `tsumilog-backup-${new Date().toISOString().slice(0, 10)}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setMessage('保存用ファイルを作成しました')
+  }
+
+  const importFromFile = async (file: File) => {
+    try {
+      const data = JSON.parse(await file.text())
+      const nextItems = parseImportedItems(data)
+      if (!window.confirm('現在の積みログを読み込んだデータで置き換えますか？')) return
+      onImport(nextItems)
+    } catch {
+      setMessage('読み込めないファイルです')
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <section className="sheet settings-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-heading">
+          <div><p className="eyebrow">SETTINGS</p><h2>設定</h2></div>
+          <button type="button" className="icon-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={exportItems}>
+            <Download size={18} />
+            <span><strong>保存</strong><small>積みログをJSONファイルで書き出します</small></span>
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()}>
+            <Upload size={18} />
+            <span><strong>読み込み</strong><small>保存したJSONファイルから復元します</small></span>
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          className="visually-hidden"
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) void importFromFile(file)
+          }}
+        />
+        {message && <p className="settings-message">{message}</p>}
+      </section>
     </div>
   )
 }
