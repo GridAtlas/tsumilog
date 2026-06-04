@@ -501,7 +501,7 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
       <form
-        className="sheet"
+        className="sheet add-sheet"
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault()

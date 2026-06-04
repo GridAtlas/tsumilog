@@ -123,16 +123,18 @@ h2 { font-size: 21px; }
 .nav-icon i { position: absolute; top: -5px; right: -9px; display: grid; min-width: 14px; height: 14px; padding: 0 3px; place-items: center; border: 1px solid #fff; border-radius: 999px; color: #fff; background: #d47654; font-family: 'Outfit', sans-serif; font-size: 8px; font-style: normal; }
 
 .sheet-backdrop { position: fixed; z-index: 10; inset: 0; display: flex; align-items: end; justify-content: center; padding: 0; background: rgba(31, 33, 29, .33); }
-.sheet { width: min(100%, 520px); padding: 10px 20px 24px; border-radius: 27px 27px 0 0; background: #fbfaf6; box-shadow: 0 -15px 50px rgba(30, 31, 27, .12); }
+.sheet { width: min(100%, 520px); max-width: 100vw; padding: 10px 20px 24px; border-radius: 27px 27px 0 0; background: #fbfaf6; box-shadow: 0 -15px 50px rgba(30, 31, 27, .12); }
 .sheet-handle { width: 34px; height: 4px; margin: 0 auto 17px; border-radius: 999px; background: #ddd8ce; }
 .sheet-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .type-toggle { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 13px; padding: 4px; border-radius: 14px; background: #efede7; }
-.type-toggle button { display: flex; height: 40px; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 11px; color: #969185; background: transparent; font-size: 12px; }
+.type-toggle button { display: flex; min-width: 0; height: 40px; align-items: center; justify-content: center; gap: 4px; padding: 0 3px; border: 0; border-radius: 11px; color: #969185; background: transparent; font-size: 11px; white-space: nowrap; }
+.type-toggle button svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .type-toggle button.active { color: #334b3a; background: #fff; box-shadow: 0 2px 7px rgba(40, 39, 33, .06); font-weight: 700; }
 .sheet label { display: block; margin-top: 11px; color: #77766e; font-size: 11px; font-weight: 600; }
-.sheet input, .sheet select { width: 100%; height: 44px; margin-top: 5px; padding: 0 12px; border: 1px solid #e6e1d7; border-radius: 12px; outline: 0; color: #343630; background: #fff; font-size: 13px; }
+.sheet input, .sheet select { width: 100%; min-width: 0; max-width: 100%; height: 44px; margin-top: 5px; padding: 0 12px; border: 1px solid #e6e1d7; border-radius: 12px; outline: 0; color: #343630; background: #fff; font-size: 13px; }
 .sheet input:focus, .sheet select:focus { border-color: #879989; }
 .field-hint { display: block; margin-top: 5px; color: #aaa497; font-size: 10px; font-weight: 400; }
+.add-sheet { max-height: 100dvh; overflow-x: hidden; overflow-y: auto; }
 .progress-sheet { padding-bottom: 30px; }
 .progress-target { display: flex; align-items: center; gap: 10px; margin-bottom: 17px; padding: 12px; border: 1px solid #ebe7de; border-radius: 15px; background: #fff; }
 .progress-target > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 11px; color: #496451; background: #edf1eb; }
@@ -156,6 +158,22 @@ h2 { font-size: 21px; }
 .history-empty { display: flex; min-height: 140px; align-items: center; flex-direction: column; justify-content: center; color: #aaa497; text-align: center; }
 .history-empty strong { margin-top: 9px; color: #666960; font-size: 12px; }
 .history-empty span { margin-top: 4px; font-size: 10px; }
+
+@media (max-height: 740px) {
+  .add-sheet { padding-bottom: 14px; }
+  .add-sheet .sheet-handle { margin-bottom: 10px; }
+  .add-sheet .sheet-heading { margin-bottom: 10px; }
+  .add-sheet .type-toggle { margin-bottom: 7px; }
+  .add-sheet label { margin-top: 7px; }
+  .add-sheet input, .add-sheet select { height: 40px; margin-top: 3px; }
+  .add-sheet .field-hint { display: none; }
+  .add-sheet .primary-button { height: 43px; margin-top: 12px; }
+}
+
+@media (max-width: 360px) {
+  .sheet { padding-right: 14px; padding-left: 14px; }
+  .type-toggle button { flex-direction: column; gap: 1px; font-size: 10px; line-height: 1; }
+}
 
 @media (min-width: 560px) {
   .app-shell { min-height: calc(100vh - 30px); margin: 15px auto; border-radius: 30px; }
