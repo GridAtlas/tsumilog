@@ -4,7 +4,6 @@ import {
   BookOpen,
   Check,
   ChevronRight,
-  Clock3,
   Clapperboard,
   Gamepad2,
   Home,
@@ -42,16 +41,17 @@ type Item = {
   currentAmount: number
   purchasedAt: string
   lastActiveAt?: string
-  alertAfterDays: number
+  alertAfterDays?: number
   cover: string
   history: ProgressLog[]
 }
 
-type StoredItem = Partial<Item> & Pick<Item, 'id' | 'title' | 'subtitle' | 'type' | 'purchasedAt' | 'alertAfterDays' | 'cover'> & {
+type StoredItem = Partial<Item> & Pick<Item, 'id' | 'title' | 'subtitle' | 'type' | 'purchasedAt' | 'cover'> & {
   progress?: number
 }
 
 const DAY = 1000 * 60 * 60 * 24
+const staleAfterDays = 14
 const storageKey = 'tsumilog-items'
 const exportVersion = 1
 
@@ -66,7 +66,6 @@ const initialItems: Item[] = [
     currentAmount: 242,
     purchasedAt: '2026-04-18',
     lastActiveAt: '2026-05-27',
-    alertAfterDays: 5,
     cover: 'cover-orange',
     history: [
       { id: 101, date: '2026-05-27', amount: 38, currentAmount: 242 },
@@ -83,7 +82,6 @@ const initialItems: Item[] = [
     totalAmount: 15,
     currentAmount: 0,
     purchasedAt: '2026-05-10',
-    alertAfterDays: 14,
     cover: 'cover-blue',
     history: [],
   },
@@ -97,7 +95,6 @@ const initialItems: Item[] = [
     currentAmount: 163,
     purchasedAt: '2026-04-02',
     lastActiveAt: '2026-06-02',
-    alertAfterDays: 7,
     cover: 'cover-green',
     history: [
       { id: 301, date: '2026-06-02', amount: 35, currentAmount: 163 },
@@ -115,7 +112,6 @@ const initialItems: Item[] = [
     currentAmount: 5,
     purchasedAt: '2026-03-22',
     lastActiveAt: '2026-05-28',
-    alertAfterDays: 14,
     cover: 'cover-purple',
     history: [
       { id: 401, date: '2026-05-28', amount: 1.5, currentAmount: 5 },
@@ -160,7 +156,6 @@ function isValidStoredItem(item: unknown): item is StoredItem {
     typeof candidate.subtitle === 'string' &&
     ['book', 'game', 'anime', 'drama'].includes(candidate.type ?? '') &&
     typeof candidate.purchasedAt === 'string' &&
-    typeof candidate.alertAfterDays === 'number' &&
     typeof candidate.cover === 'string'
   )
 }
@@ -246,8 +241,8 @@ function App() {
     () =>
       items.filter((item) => {
         if (item.status === 'completed') return false
-        const reference = item.status === 'unstarted' ? item.purchasedAt : item.lastActiveAt
-        return dateDiff(reference) >= item.alertAfterDays
+        if (item.status === 'unstarted') return true
+        return dateDiff(item.lastActiveAt) >= staleAfterDays
       }),
     [items],
   )
@@ -345,8 +340,9 @@ function App() {
                 <span className="hero-icon"><Sparkles size={17} /></span>
                 <p>今日のひと押し</p>
                 <h2>{alerts[0]?.title ?? '積みはありません'}</h2>
-                <span>{alerts[0] ? '少しだけでも続きを進めませんか？' : 'この調子で楽しみましょう'}</span>
+                <span>{alerts[0] ? '少しだけでも進めませんか？' : 'この調子で楽しみましょう'}</span>
               </div>
+              <HeroBookStack items={items} />
               {alerts[0] && (
                 <button className="hero-action" onClick={() => setProgressItem(alerts[0])}>
                   進捗を記録 <ChevronRight size={16} />
@@ -432,6 +428,34 @@ function App() {
   )
 }
 
+function HeroBookStack({ items }: { items: Item[] }) {
+  const stackItems = items.length
+    ? items.filter((item) => item.status !== 'completed').concat(items.filter((item) => item.status === 'completed')).slice(0, 7)
+    : [
+      { id: 1, cover: 'cover-orange' },
+      { id: 2, cover: 'cover-blue' },
+      { id: 3, cover: 'cover-green' },
+      { id: 4, cover: 'cover-purple' },
+    ]
+
+  return (
+    <div className="book-stack" aria-hidden="true">
+      {stackItems.map((item, index) => (
+        <span
+          key={item.id}
+          className={`stack-book ${item.cover}`}
+          style={{
+            width: `${70 + (index % 3) * 12}px`,
+            transform: `translateX(${index % 2 === 0 ? 0 : 7}px) rotate(${index % 2 === 0 ? '-1.5deg' : '1.5deg'})`,
+          }}
+        >
+          <i />
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: () => void; onImport: (items: Item[]) => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
@@ -501,9 +525,8 @@ function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: (
 }
 
 function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void; onProgress: () => void }) {
-  const reference = item.status === 'unstarted' ? item.purchasedAt : item.lastActiveAt
-  const inactiveDays = dateDiff(reference)
-  const warning = item.status !== 'completed' && inactiveDays >= item.alertAfterDays
+  const inactiveDays = dateDiff(item.lastActiveAt)
+  const warning = item.status === 'active' && inactiveDays >= staleAfterDays
   const progress = getProgress(item)
   const unit = getUnit(item.type)
 
@@ -524,7 +547,7 @@ function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void
         </div>
         <h3>{item.title}</h3>
         <p>{item.subtitle}</p>
-        {warning && <span className="warning"><Clock3 size={12} /> {inactiveDays}日空いています</span>}
+        {warning && <span className="warning">{inactiveDays}日空いています</span>}
         <div className="progress-heading">
           <span>{item.status === 'unstarted' ? '未開始' : item.status === 'completed' ? '完了' : '進捗'}</span>
           <strong>{formatAmount(item.currentAmount)} / {formatAmount(item.totalAmount)}{unit} · {progress}%</strong>
@@ -616,7 +639,6 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
   const [subtitle, setSubtitle] = useState('')
   const [totalAmount, setTotalAmount] = useState('')
   const [purchasedAt, setPurchasedAt] = useState(new Date().toISOString().slice(0, 10))
-  const [alertAfterDays, setAlertAfterDays] = useState(14)
 
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
@@ -627,7 +649,7 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
           event.preventDefault()
           const parsedTotal = Number(totalAmount)
           if (!title.trim() || parsedTotal <= 0) return
-          onAdd({ title: title.trim(), subtitle: subtitle.trim(), type, totalAmount: parsedTotal, purchasedAt, alertAfterDays })
+          onAdd({ title: title.trim(), subtitle: subtitle.trim(), type, totalAmount: parsedTotal, purchasedAt })
         }}
       >
         <div className="sheet-handle" />
@@ -656,11 +678,6 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
           <span className="field-hint">{type === 'book' ? '本の総ページ数を入力してください' : type === 'game' ? 'クリアまでにかかりそうな時間を入力してください' : '作品の全話数を入力してください'}</span>
         </label>
         <label>購入日<input type="date" value={purchasedAt} onChange={(event) => setPurchasedAt(event.target.value)} /></label>
-        <label>未開始アラート
-          <select value={alertAfterDays} onChange={(event) => setAlertAfterDays(Number(event.target.value))}>
-            <option value={3}>3日後</option><option value={7}>7日後</option><option value={14}>14日後</option><option value={30}>30日後</option>
-          </select>
-        </label>
         <button className="primary-button" type="submit">積みログに追加する</button>
       </form>
     </div>
