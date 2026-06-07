@@ -644,10 +644,11 @@ function HeroBookStack({ items }: { items: Item[] }) {
   return (
     <div className="book-stack" aria-hidden="true">
       {stackItems.map((item, index) => {
-        const isForeground = index < 7
-        const depth = Math.max(0, index - 6)
+        const foregroundCount = Math.min(stackItems.length, 7)
+        const isForeground = index < foregroundCount
+        const depth = Math.max(0, index - foregroundCount + 1)
         const width = isForeground ? 70 + (index % 3) * 12 : Math.max(34, 72 - depth * 2.4)
-        const top = isForeground ? index * 15 : Math.min(72, 8 + depth * 4.2)
+        const top = isForeground ? 90 - (foregroundCount - 1 - index) * 15 : Math.min(72, 8 + depth * 4.2)
         const right = isForeground ? (index % 2 === 0 ? 0 : -7) : Math.min(58, 14 + depth * 3.8)
         const scale = isForeground ? 1 : Math.max(0.48, 0.9 - depth * 0.035)
         const rotate = isForeground
