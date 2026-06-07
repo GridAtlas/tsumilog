@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   Clapperboard,
+  CircleCheck,
   Gamepad2,
   Home,
   Library,
@@ -13,6 +14,7 @@ import {
   Settings,
   Sparkles,
   Download,
+  Film,
   History,
   Trash2,
   Tv,
@@ -20,7 +22,7 @@ import {
   X,
 } from 'lucide-react'
 
-type ItemType = 'book' | 'game' | 'anime' | 'drama'
+type ItemType = 'book' | 'game' | 'anime' | 'drama' | 'movie' | 'action'
 type ItemStatus = 'unstarted' | 'active' | 'completed'
 type Tab = 'home' | 'library' | 'alerts'
 
@@ -29,6 +31,10 @@ type ProgressLog = {
   date: string
   amount: number
   currentAmount: number
+  totalAmount?: number
+  comment?: string
+  rating?: number
+  kind?: 'progress' | 'extension' | 'completion'
 }
 
 type Item = {
@@ -42,17 +48,41 @@ type Item = {
   purchasedAt: string
   lastActiveAt?: string
   alertAfterDays?: number
+  rating?: number
+  completedAt?: string
   cover: string
   history: ProgressLog[]
+}
+
+type PlanItem = {
+  id: number
+  title: string
+  subtitle: string
+  type: ItemType
+  plannedAt?: string
+  createdAt: string
+  cover: string
 }
 
 type StoredItem = Partial<Item> & Pick<Item, 'id' | 'title' | 'subtitle' | 'type' | 'purchasedAt' | 'cover'> & {
   progress?: number
 }
 
+const coverOptions = [
+  'cover-orange',
+  'cover-blue',
+  'cover-green',
+  'cover-purple',
+  'cover-red',
+  'cover-yellow',
+  'cover-teal',
+  'cover-gray',
+]
 const DAY = 1000 * 60 * 60 * 24
 const staleAfterDays = 14
+const planAlertWindowDays = 7
 const storageKey = 'tsumilog-items'
+const planStorageKey = 'tsumilog-plan-items'
 const exportVersion = 1
 
 const initialItems: Item[] = [
@@ -121,9 +151,16 @@ const initialItems: Item[] = [
   },
 ]
 
+function getDefaultTotal(type: ItemType) {
+  if (type === 'book') return 300
+  if (type === 'game') return 20
+  if (isSingleActionType(type)) return 1
+  return 12
+}
+
 function normalizeItems(items: StoredItem[]) {
   return items.map((item) => {
-    const defaultTotal = item.type === 'book' ? 300 : item.type === 'game' ? 20 : 12
+    const defaultTotal = getDefaultTotal(item.type)
     const totalAmount = item.totalAmount ?? defaultTotal
     const currentAmount = item.currentAmount ?? Math.round(totalAmount * ((item.progress ?? 0) / 100))
     return {
@@ -134,6 +171,18 @@ function normalizeItems(items: StoredItem[]) {
       history: item.history ?? [],
     } as Item
   })
+}
+
+function loadPlanItems() {
+  const saved = localStorage.getItem(planStorageKey)
+  if (!saved) return []
+
+  try {
+    const parsed = JSON.parse(saved) as PlanItem[]
+    return parsed.filter(isValidPlanItem)
+  } catch {
+    return []
+  }
 }
 
 function loadItems() {
@@ -154,24 +203,44 @@ function isValidStoredItem(item: unknown): item is StoredItem {
     typeof candidate.id === 'number' &&
     typeof candidate.title === 'string' &&
     typeof candidate.subtitle === 'string' &&
-    ['book', 'game', 'anime', 'drama'].includes(candidate.type ?? '') &&
+    ['book', 'game', 'anime', 'drama', 'movie', 'action'].includes(candidate.type ?? '') &&
     typeof candidate.purchasedAt === 'string' &&
     typeof candidate.cover === 'string'
   )
 }
 
-function parseImportedItems(data: unknown) {
+function isValidPlanItem(item: unknown): item is PlanItem {
+  if (!item || typeof item !== 'object') return false
+  const candidate = item as Partial<PlanItem>
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.title === 'string' &&
+    typeof candidate.subtitle === 'string' &&
+    ['book', 'game', 'anime', 'drama', 'movie', 'action'].includes(candidate.type ?? '') &&
+    typeof candidate.createdAt === 'string' &&
+    typeof candidate.cover === 'string' &&
+    (candidate.plannedAt === undefined || typeof candidate.plannedAt === 'string')
+  )
+}
+
+function parseImportedBackup(data: unknown) {
   const payload = Array.isArray(data)
     ? data
     : data && typeof data === 'object' && Array.isArray((data as { items?: unknown }).items)
       ? (data as { items: unknown[] }).items
       : null
+  const planPayload = data && typeof data === 'object' && Array.isArray((data as { planItems?: unknown }).planItems)
+    ? (data as { planItems: unknown[] }).planItems
+    : []
 
   if (!payload || !payload.every(isValidStoredItem)) {
     throw new Error('invalid backup')
   }
+  if (!planPayload.every(isValidPlanItem)) {
+    throw new Error('invalid backup')
+  }
 
-  return normalizeItems(payload)
+  return { items: normalizeItems(payload), planItems: planPayload }
 }
 
 function dateDiff(date?: string) {
@@ -180,6 +249,27 @@ function dateDiff(date?: string) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   return Math.max(0, Math.floor((today.getTime() - from.getTime()) / DAY))
+}
+
+function daysUntil(date: string) {
+  const target = new Date(`${date}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.ceil((target.getTime() - today.getTime()) / DAY)
+}
+
+function formatPlanTiming(plan: PlanItem) {
+  if (!plan.plannedAt) return '無期限'
+  const days = daysUntil(plan.plannedAt)
+  if (days < 0) return `${Math.abs(days)}日過ぎています`
+  if (days === 0) return '今日開始予定'
+  if (days === 1) return '明日開始予定'
+  if (days <= planAlertWindowDays) return `${days}日後に開始`
+  return `${formatJapaneseDate(plan.plannedAt)}開始予定`
+}
+
+function isPlanAlert(plan: PlanItem) {
+  return !!plan.plannedAt && daysUntil(plan.plannedAt) <= planAlertWindowDays
 }
 
 function getProgress(item: Item) {
@@ -203,20 +293,33 @@ function formatJapaneseDate(date: string) {
   return `${parsed.getMonth() + 1}月${parsed.getDate()}日`
 }
 
+function formatRating(rating?: number) {
+  if (!rating) return ''
+  return `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}`
+}
+
 function isEpisodeType(type: ItemType) {
   return type === 'anime' || type === 'drama'
+}
+
+function isSingleActionType(type: ItemType) {
+  return type === 'movie' || type === 'action'
 }
 
 function getTypeMeta(type: ItemType) {
   if (type === 'book') return 'BOOK'
   if (type === 'game') return 'GAME'
   if (type === 'anime') return 'ANIME'
+  if (type === 'movie') return 'MOVIE'
+  if (type === 'action') return 'ACTION'
   return 'DRAMA'
 }
 
 function getUnit(type: ItemType) {
   if (type === 'book') return 'ページ'
   if (type === 'game') return '時間'
+  if (type === 'movie') return '本'
+  if (type === 'action') return '回'
   return '話'
 }
 
@@ -224,15 +327,19 @@ function TypeIcon({ type, size }: { type: ItemType; size: number }) {
   if (type === 'book') return <BookOpen size={size} />
   if (type === 'game') return <Gamepad2 size={size} />
   if (type === 'anime') return <Clapperboard size={size} />
+  if (type === 'movie') return <Film size={size} />
+  if (type === 'action') return <CircleCheck size={size} />
   return <Tv size={size} />
 }
 
 function App() {
   const [items, setItems] = useState<Item[]>(loadItems)
+  const [planItems, setPlanItems] = useState<PlanItem[]>(loadPlanItems)
   const [tab, setTab] = useState<Tab>('home')
   const [filter, setFilter] = useState<'all' | ItemType>('all')
   const [query, setQuery] = useState('')
   const [showAdd, setShowAdd] = useState(false)
+  const [showAddPlan, setShowAddPlan] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [progressItem, setProgressItem] = useState<Item | null>(null)
   const [detailItemId, setDetailItemId] = useState<number | null>(null)
@@ -246,6 +353,8 @@ function App() {
       }),
     [items],
   )
+  const planAlerts = useMemo(() => planItems.filter(isPlanAlert), [planItems])
+  const alertCount = alerts.length + planAlerts.length
 
   const visibleItems = useMemo(
     () =>
@@ -257,42 +366,94 @@ function App() {
       }),
     [alerts, filter, items, query, tab],
   )
+  const visiblePlanItems = useMemo(
+    () =>
+      (tab === 'library' || tab === 'alerts'
+        ? planItems.filter((plan) => {
+          const matchesFilter = filter === 'all' || plan.type === filter
+          const matchesQuery = `${plan.title} ${plan.subtitle}`.toLowerCase().includes(query.toLowerCase())
+          const matchesTab = tab !== 'alerts' || planAlerts.some((alert) => alert.id === plan.id)
+          return matchesFilter && matchesQuery && matchesTab
+        })
+        : []),
+    [filter, planAlerts, planItems, query, tab],
+  )
 
   const persist = (next: Item[]) => {
     setItems(next)
     localStorage.setItem(storageKey, JSON.stringify(next))
   }
+  const persistPlans = (next: PlanItem[]) => {
+    setPlanItems(next)
+    localStorage.setItem(planStorageKey, JSON.stringify(next))
+  }
 
-  const updateProgress = (id: number, amount: number) => {
+  const updateProgress = (
+    id: number,
+    entry: { amount: number; comment?: string; rating?: number; complete?: boolean; extensionAmount?: number },
+  ) => {
     const today = new Date().toISOString().slice(0, 10)
     persist(
       items.map((item) => {
         if (item.id !== id) return item
-        const nextAmount = Math.min(amount, item.totalAmount)
+        if (entry.extensionAmount) {
+          const nextTotal = item.totalAmount + entry.extensionAmount
+          return {
+            ...item,
+            totalAmount: nextTotal,
+            history: [
+              {
+                id: Date.now(),
+                date: today,
+                amount: entry.extensionAmount,
+                currentAmount: item.currentAmount,
+                totalAmount: nextTotal,
+                comment: entry.comment,
+                kind: 'extension',
+              },
+              ...item.history,
+            ],
+          }
+        }
+
+        const nextAmount = entry.complete ? item.totalAmount : Math.min(entry.amount, item.totalAmount)
         const change = nextAmount - item.currentAmount
+        const completed = nextAmount >= item.totalAmount
         return {
           ...item,
           currentAmount: nextAmount,
-          status: nextAmount >= item.totalAmount ? 'completed' : nextAmount > 0 ? 'active' : 'unstarted',
+          status: completed ? 'completed' : nextAmount > 0 ? 'active' : 'unstarted',
           lastActiveAt: today,
+          rating: completed ? entry.rating : item.rating,
+          completedAt: completed ? today : item.completedAt,
           history: change === 0
             ? item.history
-            : [{ id: Date.now(), date: today, amount: change, currentAmount: nextAmount }, ...item.history],
+            : [
+              {
+                id: Date.now(),
+                date: today,
+                amount: change,
+                currentAmount: nextAmount,
+                totalAmount: item.totalAmount,
+                comment: entry.comment,
+                rating: completed ? entry.rating : undefined,
+                kind: completed ? 'completion' : 'progress',
+              },
+              ...item.history,
+            ],
         }
       }),
     )
     setProgressItem(null)
   }
 
-  const addItem = (item: Omit<Item, 'id' | 'status' | 'currentAmount' | 'cover' | 'history'>) => {
-    const colors = ['cover-orange', 'cover-blue', 'cover-green', 'cover-purple']
+  const addItem = (item: Omit<Item, 'id' | 'status' | 'currentAmount' | 'history'>) => {
     persist([
       {
         ...item,
         id: Date.now(),
         status: 'unstarted',
         currentAmount: 0,
-        cover: colors[items.length % colors.length],
         history: [],
       },
       ...items,
@@ -300,13 +461,46 @@ function App() {
     setShowAdd(false)
   }
 
+  const addPlanItem = (plan: Omit<PlanItem, 'id' | 'createdAt'>) => {
+    persistPlans([
+      {
+        ...plan,
+        id: Date.now(),
+        createdAt: new Date().toISOString().slice(0, 10),
+      },
+      ...planItems,
+    ])
+    setShowAddPlan(false)
+  }
+
+  const promotePlanItem = (plan: PlanItem) => {
+    const today = new Date().toISOString().slice(0, 10)
+    persist([
+      {
+        id: Date.now(),
+        title: plan.title,
+        subtitle: plan.subtitle,
+        type: plan.type,
+        status: 'unstarted',
+        totalAmount: getDefaultTotal(plan.type),
+        currentAmount: 0,
+        purchasedAt: today,
+        cover: plan.cover,
+        history: [],
+      },
+      ...items,
+    ])
+    persistPlans(planItems.filter((item) => item.id !== plan.id))
+  }
+
   const deleteItem = (id: number) => {
     persist(items.filter((item) => item.id !== id))
     setDetailItemId(null)
   }
 
-  const importItems = (next: Item[]) => {
-    persist(next)
+  const importBackup = (nextItems: Item[], nextPlanItems: PlanItem[]) => {
+    persistPlans(nextPlanItems)
+    persist(nextItems)
     setShowSettings(false)
   }
 
@@ -324,7 +518,7 @@ function App() {
         <div className="topbar-actions">
           <button className="icon-button" aria-label="通知" onClick={() => setTab('alerts')}>
             <Bell size={20} />
-            {alerts.length > 0 && <span className="notification-dot" />}
+            {alertCount > 0 && <span className="notification-dot" />}
           </button>
           <button className="icon-button" aria-label="設定" onClick={() => setShowSettings(true)}>
             <Settings size={20} />
@@ -339,8 +533,8 @@ function App() {
               <div className="hero-copy">
                 <span className="hero-icon"><Sparkles size={17} /></span>
                 <p>今日のひと押し</p>
-                <h2>{alerts[0]?.title ?? '積みはありません'}</h2>
-                <span>{alerts[0] ? '少しだけでも進めませんか？' : 'この調子で楽しみましょう'}</span>
+                <h2>{alerts[0]?.title ?? planAlerts[0]?.title ?? '積みはありません'}</h2>
+                <span>{alerts[0] ? '少しだけでも進めませんか？' : planAlerts[0] ? '開始予定が近づいています' : 'この調子で楽しみましょう'}</span>
               </div>
               <HeroBookStack items={items} />
               {alerts[0] && (
@@ -365,6 +559,7 @@ function App() {
               <h2>{tab === 'alerts' ? '気になる積み' : tab === 'library' ? 'ライブラリ' : '最近の積み'}</h2>
             </div>
             {tab === 'home' && <button className="text-button" onClick={() => setTab('library')}>すべて見る</button>}
+            {tab === 'library' && <button className="text-button" onClick={() => setShowAddPlan(true)}>予備軍を追加</button>}
           </div>
 
           {(tab === 'library' || tab === 'alerts') && (
@@ -375,9 +570,9 @@ function App() {
           )}
 
           <div className="filter-row">
-            {(['all', 'book', 'game', 'anime', 'drama'] as const).map((value) => (
+            {(['all', 'book', 'game', 'anime', 'drama', 'movie', 'action'] as const).map((value) => (
               <button key={value} className={filter === value ? 'filter active' : 'filter'} onClick={() => setFilter(value)}>
-                {value === 'all' ? 'すべて' : value === 'book' ? '読書' : value === 'game' ? 'ゲーム' : value === 'anime' ? 'アニメ' : 'ドラマ'}
+                {value === 'all' ? 'すべて' : value === 'book' ? '読書' : value === 'game' ? 'ゲーム' : value === 'anime' ? 'アニメ' : value === 'drama' ? 'ドラマ' : value === 'movie' ? '映画' : '行動'}
               </button>
             ))}
           </div>
@@ -391,11 +586,18 @@ function App() {
                 onProgress={() => setProgressItem(item)}
               />
             ))}
-            {visibleItems.length === 0 && (
+            {visiblePlanItems.map((plan) => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                onPromote={() => promotePlanItem(plan)}
+              />
+            ))}
+            {visibleItems.length === 0 && visiblePlanItems.length === 0 && (
               <div className="empty-state">
                 <Check size={26} />
                 <strong>対象の積みはありません</strong>
-                <span>新しく買った作品を登録しておきましょう。</span>
+                <span>{tab === 'alerts' ? '今すぐ気にする項目はありません。' : '新しく買った作品や予定を登録しておきましょう。'}</span>
               </div>
             )}
           </div>
@@ -407,11 +609,12 @@ function App() {
       <nav className="bottom-nav">
         <NavButton active={tab === 'home'} label="ホーム" icon={<Home size={20} />} onClick={() => setTab('home')} />
         <NavButton active={tab === 'library'} label="ライブラリ" icon={<Library size={20} />} onClick={() => setTab('library')} />
-        <NavButton active={tab === 'alerts'} label="アラート" icon={<Bell size={20} />} badge={alerts.length} onClick={() => setTab('alerts')} />
+        <NavButton active={tab === 'alerts'} label="アラート" icon={<Bell size={20} />} badge={alertCount} onClick={() => setTab('alerts')} />
       </nav>
 
       {showAdd && <AddSheet onClose={() => setShowAdd(false)} onAdd={addItem} />}
-      {showSettings && <SettingsSheet items={items} onClose={() => setShowSettings(false)} onImport={importItems} />}
+      {showAddPlan && <AddPlanSheet onClose={() => setShowAddPlan(false)} onAdd={addPlanItem} />}
+      {showSettings && <SettingsSheet items={items} planItems={planItems} onClose={() => setShowSettings(false)} onImport={importBackup} />}
       {detailItem && (
         <HistorySheet
           item={detailItem}
@@ -430,7 +633,7 @@ function App() {
 
 function HeroBookStack({ items }: { items: Item[] }) {
   const stackItems = items.length
-    ? items.filter((item) => item.status !== 'completed').concat(items.filter((item) => item.status === 'completed')).slice(0, 7)
+    ? items.filter((item) => item.status !== 'completed').concat(items.filter((item) => item.status === 'completed')).slice(0, 22)
     : [
       { id: 1, cover: 'cover-orange' },
       { id: 2, cover: 'cover-blue' },
@@ -440,23 +643,49 @@ function HeroBookStack({ items }: { items: Item[] }) {
 
   return (
     <div className="book-stack" aria-hidden="true">
-      {stackItems.map((item, index) => (
-        <span
-          key={item.id}
-          className={`stack-book ${item.cover}`}
-          style={{
-            width: `${70 + (index % 3) * 12}px`,
-            transform: `translateX(${index % 2 === 0 ? 0 : 7}px) rotate(${index % 2 === 0 ? '-1.5deg' : '1.5deg'})`,
-          }}
-        >
-          <i />
-        </span>
-      ))}
+      {stackItems.map((item, index) => {
+        const isForeground = index < 7
+        const depth = Math.max(0, index - 6)
+        const width = isForeground ? 70 + (index % 3) * 12 : Math.max(34, 72 - depth * 2.4)
+        const top = isForeground ? index * 15 : Math.min(72, 8 + depth * 4.2)
+        const right = isForeground ? (index % 2 === 0 ? 0 : -7) : Math.min(58, 14 + depth * 3.8)
+        const scale = isForeground ? 1 : Math.max(0.48, 0.9 - depth * 0.035)
+        const rotate = isForeground
+          ? index % 2 === 0 ? -1.5 : 1.5
+          : depth % 2 === 0 ? -4 : 4
+
+        return (
+          <span
+            key={item.id}
+            className={`stack-book ${item.cover}`}
+            style={{
+              top: `${top}px`,
+              right: `${right}px`,
+              width: `${width}px`,
+              opacity: isForeground ? 1 : Math.max(0.28, 0.72 - depth * 0.03),
+              transform: `scale(${scale}) rotate(${rotate}deg)`,
+              zIndex: isForeground ? 40 - index : 20 - depth,
+            }}
+          >
+            <i />
+          </span>
+        )
+      })}
     </div>
   )
 }
 
-function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: () => void; onImport: (items: Item[]) => void }) {
+function SettingsSheet({
+  items,
+  planItems,
+  onClose,
+  onImport,
+}: {
+  items: Item[]
+  planItems: PlanItem[]
+  onClose: () => void
+  onImport: (items: Item[], planItems: PlanItem[]) => void
+}) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
 
@@ -466,6 +695,7 @@ function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: (
       version: exportVersion,
       exportedAt: new Date().toISOString(),
       items,
+      planItems,
     }
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -480,9 +710,9 @@ function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: (
   const importFromFile = async (file: File) => {
     try {
       const data = JSON.parse(await file.text())
-      const nextItems = parseImportedItems(data)
+      const { items: nextItems, planItems: nextPlanItems } = parseImportedBackup(data)
       if (!window.confirm('現在の積みログを読み込んだデータで置き換えますか？')) return
-      onImport(nextItems)
+      onImport(nextItems, nextPlanItems)
     } catch {
       setMessage('読み込めないファイルです')
     } finally {
@@ -524,11 +754,40 @@ function SettingsSheet({ items, onClose, onImport }: { items: Item[]; onClose: (
   )
 }
 
+function PlanCard({ plan, onPromote }: { plan: PlanItem; onPromote: () => void }) {
+  const urgent = isPlanAlert(plan)
+
+  return (
+    <article className={urgent ? 'item-card plan-card urgent' : 'item-card plan-card'}>
+      <div className={`cover ${plan.cover}`}>
+        <TypeIcon type={plan.type} size={25} />
+      </div>
+      <div className="item-body">
+        <div className="item-meta">
+          <span>{getTypeMeta(plan.type)} / PLAN</span>
+          <span className={urgent ? 'plan-timing urgent' : 'plan-timing'}>{formatPlanTiming(plan)}</span>
+        </div>
+        <h3>{plan.title}</h3>
+        <p>{plan.subtitle}</p>
+        <div className="plan-status">
+          <span>積み予備軍</span>
+          <strong>{plan.plannedAt ? formatJapaneseDate(plan.plannedAt) : '無期限'}</strong>
+        </div>
+        <div className="quick-actions">
+          <button type="button" onClick={onPromote}>積みに登録</button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
 function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void; onProgress: () => void }) {
   const inactiveDays = dateDiff(item.lastActiveAt)
   const warning = item.status === 'active' && inactiveDays >= staleAfterDays
   const progress = getProgress(item)
   const unit = getUnit(item.type)
+  const isSingleAction = isSingleActionType(item.type)
+  const isAction = item.type === 'action'
 
   return (
     <article className="item-card" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => {
@@ -547,16 +806,17 @@ function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void
         </div>
         <h3>{item.title}</h3>
         <p>{item.subtitle}</p>
+        {item.rating && <span className="item-rating">{formatRating(item.rating)}</span>}
         {warning && <span className="warning">{inactiveDays}日空いています</span>}
         <div className="progress-heading">
-          <span>{item.status === 'unstarted' ? '未開始' : item.status === 'completed' ? '完了' : '進捗'}</span>
-          <strong>{formatAmount(item.currentAmount)} / {formatAmount(item.totalAmount)}{unit} · {progress}%</strong>
+          <span>{isSingleAction ? item.status === 'completed' ? isAction ? '実行済み' : '視聴済み' : isAction ? '未実行' : '未視聴' : item.status === 'unstarted' ? '未開始' : item.status === 'completed' ? '完了' : '進捗'}</span>
+          <strong>{isSingleAction ? item.status === 'completed' ? `1${unit} · 100%` : `0${unit} · 0%` : `${formatAmount(item.currentAmount)} / ${formatAmount(item.totalAmount)}${unit} · ${progress}%`}</strong>
         </div>
         <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
         {item.status !== 'completed' && (
           <div className="quick-actions">
             <button onClick={(event) => { event.stopPropagation(); onProgress() }}>
-              {item.type === 'book' ? '読んだページを記録' : item.type === 'game' ? 'プレー時間を記録' : '見た話数を記録'}
+              {item.type === 'book' ? '読んだページを記録' : item.type === 'game' ? 'プレー時間を記録' : item.type === 'movie' ? '見たことを記録' : item.type === 'action' ? 'やったことを記録' : '見た話数を記録'}
             </button>
           </div>
         )}
@@ -568,6 +828,8 @@ function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void
 function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onClose: () => void; onProgress: () => void; onDelete: () => void }) {
   const isBook = item.type === 'book'
   const isGame = item.type === 'game'
+  const isMovie = item.type === 'movie'
+  const isAction = item.type === 'action'
   const unit = getUnit(item.type)
 
   return (
@@ -593,10 +855,16 @@ function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onC
                 <div>
                   <time dateTime={log.date}>{formatJapaneseDate(log.date)}</time>
                   <strong>
-                    {log.amount >= 0
-                      ? `${formatAmount(log.amount)}${unit}${isBook ? '読み進めた' : isGame ? 'プレーした' : '見た'}`
+                    {log.kind === 'extension'
+                      ? `想定を${formatAmount(log.amount)}${unit}延長した`
+                      : log.kind === 'completion'
+                        ? `${formatAmount(log.amount)}${unit}${isBook ? '読み切った' : isGame ? 'プレーして完了した' : isAction ? 'やり終えた' : '見終えた'}`
+                        : log.amount >= 0
+                      ? `${formatAmount(log.amount)}${unit}${isBook ? '読み進めた' : isGame ? 'プレーした' : isAction ? 'やった' : isMovie ? '見た' : '見た'}`
                       : `${formatAmount(Math.abs(log.amount))}${unit}分、進捗を修正した`}
                   </strong>
+                  {log.rating && <span className="history-rating">{formatRating(log.rating)}</span>}
+                  {log.comment && <p>{log.comment}</p>}
                 </div>
                 <small>{formatAmount(log.currentAmount)}{unit}</small>
               </li>
@@ -633,12 +901,16 @@ function NavButton({ active, label, icon, badge, onClick }: { active: boolean; l
   )
 }
 
-function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<Item, 'id' | 'status' | 'currentAmount' | 'cover' | 'history'>) => void }) {
+function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<Item, 'id' | 'status' | 'currentAmount' | 'history'>) => void }) {
   const [type, setType] = useState<ItemType>('book')
   const [title, setTitle] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [totalAmount, setTotalAmount] = useState('')
   const [purchasedAt, setPurchasedAt] = useState(new Date().toISOString().slice(0, 10))
+  const [cover, setCover] = useState(coverOptions[0])
+  const isSingleAction = isSingleActionType(type)
+  const isMovie = type === 'movie'
+  const isAction = type === 'action'
 
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
@@ -647,9 +919,9 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault()
-          const parsedTotal = Number(totalAmount)
+          const parsedTotal = isSingleAction ? 1 : Number(totalAmount)
           if (!title.trim() || parsedTotal <= 0) return
-          onAdd({ title: title.trim(), subtitle: subtitle.trim(), type, totalAmount: parsedTotal, purchasedAt })
+          onAdd({ title: title.trim(), subtitle: subtitle.trim(), type, totalAmount: parsedTotal, purchasedAt, cover })
         }}
       >
         <div className="sheet-handle" />
@@ -662,34 +934,149 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
           <button type="button" className={type === 'game' ? 'active' : ''} onClick={() => { setType('game'); setTotalAmount('') }}><Gamepad2 size={18} /> ゲーム</button>
           <button type="button" className={type === 'anime' ? 'active' : ''} onClick={() => { setType('anime'); setTotalAmount('') }}><Clapperboard size={18} /> アニメ</button>
           <button type="button" className={type === 'drama' ? 'active' : ''} onClick={() => { setType('drama'); setTotalAmount('') }}><Tv size={18} /> ドラマ</button>
+          <button type="button" className={type === 'movie' ? 'active' : ''} onClick={() => { setType('movie'); setTotalAmount('') }}><Film size={18} /> 映画</button>
+          <button type="button" className={type === 'action' ? 'active' : ''} onClick={() => { setType('action'); setTotalAmount('') }}><CircleCheck size={18} /> 行動</button>
         </div>
-        <label>タイトル<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="作品名を入力" /></label>
-        <label>{type === 'book' ? '著者' : type === 'game' ? 'プラットフォーム' : '配信サービスなど'}<input value={subtitle} onChange={(event) => setSubtitle(event.target.value)} placeholder={type === 'book' ? '著者名' : type === 'game' ? 'Steam / Switch など' : 'Netflix / TV など'} /></label>
-        <label>{type === 'book' ? 'ページ数' : type === 'game' ? '想定クリア時間' : '全話数'}
-          <input
-            type="number"
-            min="0"
-            step={type === 'game' ? '0.5' : '1'}
-            value={totalAmount}
-            onChange={(event) => setTotalAmount(event.target.value)}
-            placeholder={type === 'book' ? '例: 320' : type === 'game' ? '例: 20' : '例: 12'}
-            required
-          />
-          <span className="field-hint">{type === 'book' ? '本の総ページ数を入力してください' : type === 'game' ? 'クリアまでにかかりそうな時間を入力してください' : '作品の全話数を入力してください'}</span>
-        </label>
-        <label>購入日<input type="date" value={purchasedAt} onChange={(event) => setPurchasedAt(event.target.value)} /></label>
+        <label>{isAction ? 'やりたいこと' : 'タイトル'}<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={isAction ? '例: パスポートを更新する' : '作品名を入力'} /></label>
+        <label>{type === 'book' ? '著者' : type === 'game' ? 'プラットフォーム' : isMovie ? '視聴サービス・媒体' : isAction ? '場所・メモ' : '配信サービスなど'}<input value={subtitle} onChange={(event) => setSubtitle(event.target.value)} placeholder={type === 'book' ? '著者名' : type === 'game' ? 'Steam / Switch など' : isMovie ? '映画館 / Netflix / Blu-ray など' : isAction ? '役所 / 週末 / 必要なもの など' : 'Netflix / TV など'} /></label>
+        {!isSingleAction && (
+          <label>{type === 'book' ? 'ページ数' : type === 'game' ? '想定クリア時間' : '全話数'}
+            <input
+              type="number"
+              min="0"
+              step={type === 'game' ? '0.5' : '1'}
+              value={totalAmount}
+              onChange={(event) => setTotalAmount(event.target.value)}
+              placeholder={type === 'book' ? '例: 320' : type === 'game' ? '例: 20' : '例: 12'}
+              required
+            />
+            <span className="field-hint">{type === 'book' ? '本の総ページ数を入力してください' : type === 'game' ? 'クリアまでにかかりそうな時間を入力してください' : '作品の全話数を入力してください'}</span>
+          </label>
+        )}
+        <label>{isMovie || isAction ? '追加日' : '購入日'}<input type="date" value={purchasedAt} onChange={(event) => setPurchasedAt(event.target.value)} /></label>
+        <fieldset className="cover-picker">
+          <legend>色</legend>
+          <div>
+            {coverOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={cover === option ? 'active' : ''}
+                aria-label={`色 ${coverOptions.indexOf(option) + 1}`}
+                aria-pressed={cover === option}
+                onClick={() => setCover(option)}
+              >
+                <span className={option} />
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <button className="primary-button" type="submit">積みログに追加する</button>
       </form>
     </div>
   )
 }
 
-function ProgressSheet({ item, onClose, onSave }: { item: Item; onClose: () => void; onSave: (id: number, amount: number) => void }) {
+function AddPlanSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (plan: Omit<PlanItem, 'id' | 'createdAt'>) => void }) {
+  const [type, setType] = useState<ItemType>('movie')
+  const [title, setTitle] = useState('')
+  const [subtitle, setSubtitle] = useState('')
+  const [scheduleMode, setScheduleMode] = useState<'date' | 'none'>('date')
+  const [plannedAt, setPlannedAt] = useState(new Date().toISOString().slice(0, 10))
+  const [cover, setCover] = useState(coverOptions[1])
+  const isMovie = type === 'movie'
+  const isAction = type === 'action'
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form
+        className="sheet add-sheet"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!title.trim()) return
+          onAdd({
+            title: title.trim(),
+            subtitle: subtitle.trim(),
+            type,
+            plannedAt: scheduleMode === 'date' ? plannedAt : undefined,
+            cover,
+          })
+        }}
+      >
+        <div className="sheet-handle" />
+        <div className="sheet-heading">
+          <div><p className="eyebrow">PLAN SOMEDAY</p><h2>積み予備軍</h2></div>
+          <button type="button" className="icon-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="type-toggle">
+          <button type="button" className={type === 'book' ? 'active' : ''} onClick={() => setType('book')}><BookOpen size={18} /> 読書</button>
+          <button type="button" className={type === 'game' ? 'active' : ''} onClick={() => setType('game')}><Gamepad2 size={18} /> ゲーム</button>
+          <button type="button" className={type === 'anime' ? 'active' : ''} onClick={() => setType('anime')}><Clapperboard size={18} /> アニメ</button>
+          <button type="button" className={type === 'drama' ? 'active' : ''} onClick={() => setType('drama')}><Tv size={18} /> ドラマ</button>
+          <button type="button" className={type === 'movie' ? 'active' : ''} onClick={() => setType('movie')}><Film size={18} /> 映画</button>
+          <button type="button" className={type === 'action' ? 'active' : ''} onClick={() => setType('action')}><CircleCheck size={18} /> 行動</button>
+        </div>
+        <label>{isAction ? 'やりたいこと' : 'タイトル'}<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={isAction ? '例: 机まわりを片付ける' : 'いつか触れたい作品名'} /></label>
+        <label>{type === 'book' ? '著者・メモ' : type === 'game' ? 'プラットフォーム・メモ' : isMovie ? '視聴サービス・媒体' : isAction ? '場所・メモ' : '配信サービス・メモ'}<input value={subtitle} onChange={(event) => setSubtitle(event.target.value)} placeholder={type === 'book' ? '著者名 / 気になった理由' : type === 'game' ? 'Steam / Switch など' : isMovie ? '映画館 / Netflix / Blu-ray など' : isAction ? '家 / 外出時 / 必要なもの など' : 'Netflix / TV など'} /></label>
+        <fieldset className="schedule-picker">
+          <legend>開始予定</legend>
+          <div className="progress-mode-actions">
+            <button type="button" className={scheduleMode === 'date' ? 'active' : ''} onClick={() => setScheduleMode('date')}>日付指定</button>
+            <button type="button" className={scheduleMode === 'none' ? 'active' : ''} onClick={() => setScheduleMode('none')}>無期限</button>
+          </div>
+          {scheduleMode === 'date' && <input type="date" value={plannedAt} onChange={(event) => setPlannedAt(event.target.value)} />}
+        </fieldset>
+        <fieldset className="cover-picker">
+          <legend>色</legend>
+          <div>
+            {coverOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={cover === option ? 'active' : ''}
+                aria-label={`色 ${coverOptions.indexOf(option) + 1}`}
+                aria-pressed={cover === option}
+                onClick={() => setCover(option)}
+              >
+                <span className={option} />
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <button className="primary-button" type="submit">予備軍に追加する</button>
+      </form>
+    </div>
+  )
+}
+
+function ProgressSheet({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: Item
+  onClose: () => void
+  onSave: (
+    id: number,
+    entry: { amount: number; comment?: string; rating?: number; complete?: boolean; extensionAmount?: number },
+  ) => void
+}) {
   const [value, setValue] = useState('')
+  const [comment, setComment] = useState('')
+  const [rating, setRating] = useState(0)
+  const [mode, setMode] = useState<'progress' | 'extension'>('progress')
+  const [completeRequested, setCompleteRequested] = useState(isSingleActionType(item.type))
   const isBook = item.type === 'book'
   const isGame = item.type === 'game'
+  const isSingleAction = isSingleActionType(item.type)
+  const isAction = item.type === 'action'
   const isCumulative = isBook || isEpisodeType(item.type)
   const unit = getUnit(item.type)
+  const parsedValue = Number(value)
+  const nextAmount = isCumulative ? parsedValue : item.currentAmount + parsedValue
+  const willComplete = mode === 'progress' && (completeRequested || (!!value && nextAmount >= item.totalAmount))
+  const cleanComment = comment.trim() || undefined
 
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
@@ -698,9 +1085,25 @@ function ProgressSheet({ item, onClose, onSave }: { item: Item; onClose: () => v
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault()
-          const parsedValue = Number(value)
+          if (mode === 'extension') {
+            if (parsedValue <= 0 || !value) return
+            onSave(item.id, { amount: item.currentAmount, extensionAmount: parsedValue, comment: cleanComment })
+            return
+          }
+
+          if (completeRequested) {
+            if (rating === 0) return
+            onSave(item.id, { amount: item.totalAmount, comment: cleanComment, rating, complete: true })
+            return
+          }
+
           if (parsedValue < 0 || !value) return
-          onSave(item.id, isCumulative ? parsedValue : item.currentAmount + parsedValue)
+          if (willComplete && rating === 0) return
+          onSave(item.id, {
+            amount: nextAmount,
+            comment: cleanComment,
+            rating: willComplete ? rating : undefined,
+          })
         }}
       >
         <div className="sheet-handle" />
@@ -712,21 +1115,87 @@ function ProgressSheet({ item, onClose, onSave }: { item: Item; onClose: () => v
           <span><TypeIcon type={item.type} size={18} /></span>
           <div><strong>{item.title}</strong><small>現在 {formatAmount(item.currentAmount)} / {formatAmount(item.totalAmount)}{unit}</small></div>
         </div>
-        <label>{isBook ? '何ページまで読みましたか？' : isGame ? '今日、何時間プレーしましたか？' : '何話まで見ましたか？'}
-          <input
-            type="number"
-            min="0"
-            max={isCumulative ? item.totalAmount : undefined}
-            step={isGame ? '0.5' : '1'}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder={isBook ? `例: ${Math.min(item.currentAmount + 20, item.totalAmount)}` : isGame ? '例: 1.5' : `例: ${Math.min(item.currentAmount + 1, item.totalAmount)}`}
-            autoFocus
-            required
+        {!isSingleAction && (
+          <div className="progress-mode-actions">
+            <button
+              type="button"
+              className={mode === 'progress' && !completeRequested ? 'active' : ''}
+              onClick={() => { setMode('progress'); setValue(''); setCompleteRequested(false) }}
+            >
+              記録
+            </button>
+            <button
+              type="button"
+              className={mode === 'extension' ? 'active' : ''}
+              onClick={() => { setMode('extension'); setValue(''); setCompleteRequested(false); setRating(0) }}
+            >
+              延長
+            </button>
+            <button
+              type="button"
+              className={completeRequested ? 'active' : ''}
+              onClick={() => { setMode('progress'); setValue(''); setCompleteRequested(true) }}
+            >
+              完了
+            </button>
+          </div>
+        )}
+        {isSingleAction ? (
+          <div className="completion-note">
+            <strong>{isAction ? '実行済みにします' : '視聴済みにします'}</strong>
+            <span>評価と一言メモを残せます。</span>
+          </div>
+        ) : (
+          <label>{mode === 'extension' ? `どれだけ延長しますか？` : completeRequested ? '完了として記録します' : isBook ? '何ページまで読みましたか？' : isGame ? '今日、何時間プレーしましたか？' : '何話まで見ましたか？'}
+            <input
+              type="number"
+              min="0"
+              max={mode === 'progress' && isCumulative ? item.totalAmount : undefined}
+              step={isGame ? '0.5' : '1'}
+              value={value}
+              onChange={(event) => { setValue(event.target.value); setCompleteRequested(false) }}
+              placeholder={mode === 'extension' ? (isGame ? '例: 5' : '例: 1') : isBook ? `例: ${Math.min(item.currentAmount + 20, item.totalAmount)}` : isGame ? '例: 1.5' : `例: ${Math.min(item.currentAmount + 1, item.totalAmount)}`}
+              disabled={completeRequested}
+              autoFocus
+              required={!completeRequested}
+            />
+            <span className="field-hint">
+              {mode === 'extension'
+                ? `現在の想定 ${formatAmount(item.totalAmount)}${unit}`
+                : completeRequested
+                  ? `${formatAmount(item.totalAmount)}${unit}まで進めた扱いにします`
+                  : isBook ? `全${formatAmount(item.totalAmount)}ページ` : isGame ? `想定クリア時間 ${formatAmount(item.totalAmount)}時間` : `全${formatAmount(item.totalAmount)}話`}
+            </span>
+          </label>
+        )}
+        {(willComplete || completeRequested) && (
+          <fieldset className="rating-picker">
+            <legend>評価</legend>
+            <div>
+              {[1, 2, 3, 4, 5].map((score) => (
+                <button
+                  key={score}
+                  type="button"
+                  className={rating >= score ? 'active' : ''}
+                  aria-label={`${score}つ星`}
+                  aria-pressed={rating === score}
+                  onClick={() => setRating(score)}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        <label>コメント
+          <textarea
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="任意で一言メモ"
+            rows={3}
           />
-          <span className="field-hint">{isBook ? `全${formatAmount(item.totalAmount)}ページ` : isGame ? `想定クリア時間 ${formatAmount(item.totalAmount)}時間` : `全${formatAmount(item.totalAmount)}話`}</span>
         </label>
-        <button className="primary-button" type="submit">記録する</button>
+        <button className="primary-button" type="submit">{mode === 'extension' ? '延長する' : completeRequested ? '完了を記録する' : '記録する'}</button>
       </form>
     </div>
   )
