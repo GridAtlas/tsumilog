@@ -172,7 +172,7 @@ function registrationLog(item: Pick<Item, 'id' | 'purchasedAt'>): ProgressLog {
 function normalizeItems(items: StoredItem[]) {
   return items.map((item) => {
     const defaultTotal = getDefaultTotal(item.type)
-    const totalAmount = item.totalAmount ?? defaultTotal
+    const totalAmount = item.totalAmount && item.totalAmount > 0 ? item.totalAmount : defaultTotal
     const currentAmount = item.currentAmount ?? Math.round(totalAmount * ((item.progress ?? 0) / 100))
     const history = item.history ?? []
     return {
@@ -204,7 +204,7 @@ function loadItems() {
   try {
     return normalizeItems(JSON.parse(saved) as StoredItem[])
   } catch {
-    return initialItems
+    return normalizeItems(initialItems)
   }
 }
 
@@ -285,6 +285,7 @@ function isPlanAlert(plan: PlanItem) {
 }
 
 function getProgress(item: Item) {
+  if (item.totalAmount <= 0) return 0
   return Math.min(100, Math.round((item.currentAmount / item.totalAmount) * 100))
 }
 
@@ -349,7 +350,7 @@ function App() {
   const [planItems, setPlanItems] = useState<PlanItem[]>(loadPlanItems)
   const [tab, setTab] = useState<Tab>('home')
   const [librarySection, setLibrarySection] = useState<LibrarySection>('active')
-  const [filter, setFilter] = useState<'all' | ItemType>('all')
+  const [selectedTypes, setSelectedTypes] = useState<ItemType[]>([])
   const [query, setQuery] = useState('')
   const [showAddChoice, setShowAddChoice] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -373,27 +374,33 @@ function App() {
   const visibleItems = useMemo(
     () =>
       items.filter((item) => {
-        const matchesFilter = filter === 'all' || item.type === filter
+        const matchesFilter = selectedTypes.length === 0 || selectedTypes.includes(item.type)
         const matchesQuery = `${item.title} ${item.subtitle}`.toLowerCase().includes(query.toLowerCase())
         const matchesTab = tab !== 'alerts' || alerts.some((alert) => alert.id === item.id)
         const matchesLibrarySection = tab !== 'library' || (librarySection === 'active' ? item.status !== 'completed' : librarySection === 'completed' && item.status === 'completed')
         return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
       }),
-    [alerts, filter, items, librarySection, query, tab],
+    [alerts, items, librarySection, query, selectedTypes, tab],
   )
   const visiblePlanItems = useMemo(
     () =>
       (tab === 'library' || tab === 'alerts'
         ? planItems.filter((plan) => {
-          const matchesFilter = filter === 'all' || plan.type === filter
+          const matchesFilter = selectedTypes.length === 0 || selectedTypes.includes(plan.type)
           const matchesQuery = `${plan.title} ${plan.subtitle}`.toLowerCase().includes(query.toLowerCase())
           const matchesTab = tab !== 'alerts' || planAlerts.some((alert) => alert.id === plan.id)
           const matchesLibrarySection = tab !== 'library' || librarySection === 'plan'
           return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
         })
         : []),
-    [filter, librarySection, planAlerts, planItems, query, tab],
+    [librarySection, planAlerts, planItems, query, selectedTypes, tab],
   )
+
+  const toggleTypeFilter = (type: ItemType) => {
+    setSelectedTypes((current) =>
+      current.includes(type) ? current.filter((value) => value !== type) : [...current, type],
+    )
+  }
 
   const persist = (next: Item[]) => {
     setItems(next)
@@ -621,9 +628,15 @@ function App() {
           )}
 
           <div className="filter-row">
-            {(['all', 'book', 'game', 'anime', 'drama', 'movie', 'action'] as const).map((value) => (
-              <button key={value} className={filter === value ? 'filter active' : 'filter'} onClick={() => setFilter(value)}>
-                {value === 'all' ? 'すべて' : value === 'book' ? '読書' : value === 'game' ? 'ゲーム' : value === 'anime' ? 'アニメ' : value === 'drama' ? 'ドラマ' : value === 'movie' ? '映画' : '行動'}
+            {(['book', 'game', 'anime', 'drama', 'movie', 'action'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={selectedTypes.includes(value) ? 'filter active' : 'filter'}
+                aria-pressed={selectedTypes.includes(value)}
+                onClick={() => toggleTypeFilter(value)}
+              >
+                {value === 'book' ? '読書' : value === 'game' ? 'ゲーム' : value === 'anime' ? 'アニメ' : value === 'drama' ? 'ドラマ' : value === 'movie' ? '映画' : '行動'}
               </button>
             ))}
           </div>
