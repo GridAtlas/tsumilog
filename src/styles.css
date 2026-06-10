@@ -121,6 +121,10 @@ h2 { font-size: 21px; }
 .search-box { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; padding: 0 14px; border: 1px solid #ebe7de; border-radius: 15px; color: #aaa497; background: #fff; }
 .search-box input { width: 100%; height: 45px; border: 0; outline: 0; background: transparent; font-size: 16px; }
 
+.library-section-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 10px; padding: 4px; border-radius: 14px; background: #efede7; }
+.library-section-row button { min-width: 0; height: 36px; padding: 0 6px; border: 0; border-radius: 10px; color: #8c897e; background: transparent; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.library-section-row button.active { color: #334b3a; background: #fff; box-shadow: 0 2px 7px rgba(40, 39, 33, .06); }
+
 .filter-row { display: flex; gap: 7px; margin-bottom: 14px; overflow-x: auto; scrollbar-width: none; }
 .filter-row::-webkit-scrollbar { display: none; }
 .filter { padding: 7px 13px; border: 1px solid #e8e3d9; border-radius: 999px; color: #8c897e; background: transparent; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -158,6 +162,9 @@ h2 { font-size: 21px; }
 .quick-actions { display: flex; gap: 5px; margin-top: 9px; }
 .quick-actions button { padding: 5px 8px; border: 1px solid #ebe7de; border-radius: 7px; color: #72766b; background: #faf9f5; font-size: 9px; font-weight: 600; }
 
+.detail-actions { display: grid; gap: 8px; margin-top: 16px; }
+.secondary-button { width: 100%; height: 45px; border: 1px solid #ded8cc; border-radius: 14px; color: #596156; background: #fff; font-size: 13px; font-weight: 700; }
+
 .empty-state { display: flex; min-height: 180px; align-items: center; flex-direction: column; justify-content: center; border: 1px dashed #ddd8cc; border-radius: 22px; color: #9d998e; text-align: center; }
 .empty-state strong { margin-top: 9px; color: #64665e; font-size: 13px; }
 .empty-state span { margin-top: 4px; font-size: 11px; }
@@ -186,6 +193,13 @@ h2 { font-size: 21px; }
 .add-sheet .type-toggle { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .add-sheet label { min-width: 0; overflow: hidden; }
 .add-sheet input, .add-sheet select { display: block; }
+.add-choice-sheet { width: calc(100vw - 24px); max-width: 496px; margin: 0 12px 12px; border-radius: 24px; }
+.add-choice-actions { display: grid; gap: 9px; }
+.add-choice-actions button { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 64px; padding: 12px 13px; border: 1px solid #ebe7de; border-radius: 14px; color: #344b3b; background: #fff; text-align: left; }
+.add-choice-actions button svg { flex: 0 0 auto; color: #d47654; }
+.add-choice-actions strong, .add-choice-actions small { display: block; }
+.add-choice-actions strong { font-size: 13px; }
+.add-choice-actions small { margin-top: 3px; color: #8f8a7f; font-size: 10px; line-height: 1.45; }
 .cover-picker { margin: 11px 0 0; padding: 0; border: 0; }
 .cover-picker legend { margin: 0 0 6px; padding: 0; color: #77766e; font-size: 11px; font-weight: 600; }
 .cover-picker div { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 7px; }

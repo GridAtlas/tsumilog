@@ -25,6 +25,7 @@ import {
 type ItemType = 'book' | 'game' | 'anime' | 'drama' | 'movie' | 'action'
 type ItemStatus = 'unstarted' | 'active' | 'completed'
 type Tab = 'home' | 'library' | 'alerts'
+type LibrarySection = 'plan' | 'active' | 'completed'
 
 type ProgressLog = {
   id: number
@@ -34,7 +35,7 @@ type ProgressLog = {
   totalAmount?: number
   comment?: string
   rating?: number
-  kind?: 'progress' | 'extension' | 'completion'
+  kind?: 'progress' | 'extension' | 'completion' | 'registration'
 }
 
 type Item = {
@@ -158,17 +159,28 @@ function getDefaultTotal(type: ItemType) {
   return 12
 }
 
+function registrationLog(item: Pick<Item, 'id' | 'purchasedAt'>): ProgressLog {
+  return {
+    id: item.id * 1000,
+    date: item.purchasedAt,
+    amount: 0,
+    currentAmount: 0,
+    kind: 'registration',
+  }
+}
+
 function normalizeItems(items: StoredItem[]) {
   return items.map((item) => {
     const defaultTotal = getDefaultTotal(item.type)
     const totalAmount = item.totalAmount ?? defaultTotal
     const currentAmount = item.currentAmount ?? Math.round(totalAmount * ((item.progress ?? 0) / 100))
+    const history = item.history ?? []
     return {
       ...item,
       status: currentAmount >= totalAmount ? 'completed' : currentAmount > 0 ? 'active' : 'unstarted',
       totalAmount,
       currentAmount,
-      history: item.history ?? [],
+      history: history.some((log) => log.kind === 'registration') ? history : [...history, registrationLog(item)],
     } as Item
   })
 }
@@ -187,7 +199,7 @@ function loadPlanItems() {
 
 function loadItems() {
   const saved = localStorage.getItem(storageKey)
-  if (!saved) return initialItems
+  if (!saved) return normalizeItems(initialItems)
 
   try {
     return normalizeItems(JSON.parse(saved) as StoredItem[])
@@ -336,8 +348,10 @@ function App() {
   const [items, setItems] = useState<Item[]>(loadItems)
   const [planItems, setPlanItems] = useState<PlanItem[]>(loadPlanItems)
   const [tab, setTab] = useState<Tab>('home')
+  const [librarySection, setLibrarySection] = useState<LibrarySection>('active')
   const [filter, setFilter] = useState<'all' | ItemType>('all')
   const [query, setQuery] = useState('')
+  const [showAddChoice, setShowAddChoice] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showAddPlan, setShowAddPlan] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -362,9 +376,10 @@ function App() {
         const matchesFilter = filter === 'all' || item.type === filter
         const matchesQuery = `${item.title} ${item.subtitle}`.toLowerCase().includes(query.toLowerCase())
         const matchesTab = tab !== 'alerts' || alerts.some((alert) => alert.id === item.id)
-        return matchesFilter && matchesQuery && matchesTab
+        const matchesLibrarySection = tab !== 'library' || (librarySection === 'active' ? item.status !== 'completed' : librarySection === 'completed' && item.status === 'completed')
+        return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
       }),
-    [alerts, filter, items, query, tab],
+    [alerts, filter, items, librarySection, query, tab],
   )
   const visiblePlanItems = useMemo(
     () =>
@@ -373,10 +388,11 @@ function App() {
           const matchesFilter = filter === 'all' || plan.type === filter
           const matchesQuery = `${plan.title} ${plan.subtitle}`.toLowerCase().includes(query.toLowerCase())
           const matchesTab = tab !== 'alerts' || planAlerts.some((alert) => alert.id === plan.id)
-          return matchesFilter && matchesQuery && matchesTab
+          const matchesLibrarySection = tab !== 'library' || librarySection === 'plan'
+          return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
         })
         : []),
-    [filter, planAlerts, planItems, query, tab],
+    [filter, librarySection, planAlerts, planItems, query, tab],
   )
 
   const persist = (next: Item[]) => {
@@ -448,13 +464,14 @@ function App() {
   }
 
   const addItem = (item: Omit<Item, 'id' | 'status' | 'currentAmount' | 'history'>) => {
+    const id = Date.now()
     persist([
       {
         ...item,
-        id: Date.now(),
+        id,
         status: 'unstarted',
         currentAmount: 0,
-        history: [],
+        history: [registrationLog({ id, purchasedAt: item.purchasedAt })],
       },
       ...items,
     ])
@@ -473,11 +490,27 @@ function App() {
     setShowAddPlan(false)
   }
 
+  const demoteItem = (item: Item) => {
+    if (item.currentAmount > 0 && !window.confirm('記録済みの進捗は予備軍には引き継がれません。予備軍に戻しますか？')) return
+    const nextPlan: PlanItem = {
+      id: Date.now(),
+      title: item.title,
+      subtitle: item.subtitle,
+      type: item.type,
+      createdAt: new Date().toISOString().slice(0, 10),
+      cover: item.cover,
+    }
+    persistPlans([nextPlan, ...planItems])
+    persist(items.filter((candidate) => candidate.id !== item.id))
+    setDetailItemId(null)
+  }
+
   const promotePlanItem = (plan: PlanItem) => {
     const today = new Date().toISOString().slice(0, 10)
+    const id = Date.now()
     persist([
       {
-        id: Date.now(),
+        id,
         title: plan.title,
         subtitle: plan.subtitle,
         type: plan.type,
@@ -486,7 +519,7 @@ function App() {
         currentAmount: 0,
         purchasedAt: today,
         cover: plan.cover,
-        history: [],
+        history: [registrationLog({ id, purchasedAt: today })],
       },
       ...items,
     ])
@@ -559,13 +592,31 @@ function App() {
               <h2>{tab === 'alerts' ? '気になる積み' : tab === 'library' ? 'ライブラリ' : '最近の積み'}</h2>
             </div>
             {tab === 'home' && <button className="text-button" onClick={() => setTab('library')}>すべて見る</button>}
-            {tab === 'library' && <button className="text-button" onClick={() => setShowAddPlan(true)}>予備軍を追加</button>}
           </div>
 
           {(tab === 'library' || tab === 'alerts') && (
             <div className="search-box">
               <Search size={18} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="タイトルや著者で検索" />
+            </div>
+          )}
+
+          {tab === 'library' && (
+            <div className="library-section-row" aria-label="ライブラリ区分">
+              {([
+                ['plan', '予備軍'],
+                ['active', '積み中'],
+                ['completed', '消化済'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={librarySection === value ? 'active' : ''}
+                  onClick={() => setLibrarySection(value)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           )}
 
@@ -584,6 +635,7 @@ function App() {
                 item={item}
                 onOpen={() => setDetailItemId(item.id)}
                 onProgress={() => setProgressItem(item)}
+                onDemote={() => demoteItem(item)}
               />
             ))}
             {visiblePlanItems.map((plan) => (
@@ -604,7 +656,7 @@ function App() {
         </section>
       </main>
 
-      <button className="fab" aria-label="新しく登録" onClick={() => setShowAdd(true)}><Plus size={24} /></button>
+      <button className="fab" aria-label="新しく登録" onClick={() => setShowAddChoice(true)}><Plus size={24} /></button>
 
       <nav className="bottom-nav">
         <NavButton active={tab === 'home'} label="ホーム" icon={<Home size={20} />} onClick={() => setTab('home')} />
@@ -612,6 +664,19 @@ function App() {
         <NavButton active={tab === 'alerts'} label="アラート" icon={<Bell size={20} />} badge={alertCount} onClick={() => setTab('alerts')} />
       </nav>
 
+      {showAddChoice && (
+        <AddChoiceSheet
+          onClose={() => setShowAddChoice(false)}
+          onAddItem={() => {
+            setShowAddChoice(false)
+            setShowAdd(true)
+          }}
+          onAddPlan={() => {
+            setShowAddChoice(false)
+            setShowAddPlan(true)
+          }}
+        />
+      )}
       {showAdd && <AddSheet onClose={() => setShowAdd(false)} onAdd={addItem} />}
       {showAddPlan && <AddPlanSheet onClose={() => setShowAddPlan(false)} onAdd={addPlanItem} />}
       {showSettings && <SettingsSheet items={items} planItems={planItems} onClose={() => setShowSettings(false)} onImport={importBackup} />}
@@ -624,6 +689,7 @@ function App() {
             setProgressItem(detailItem)
           }}
           onDelete={() => deleteItem(detailItem.id)}
+          onDemote={() => demoteItem(detailItem)}
         />
       )}
       {progressItem && <ProgressSheet item={progressItem} onClose={() => setProgressItem(null)} onSave={updateProgress} />}
@@ -644,16 +710,19 @@ function HeroBookStack({ items }: { items: Item[] }) {
   return (
     <div className="book-stack" aria-hidden="true">
       {stackItems.map((item, index) => {
-        const foregroundCount = Math.min(stackItems.length, 7)
-        const isForeground = index < foregroundCount
-        const depth = Math.max(0, index - foregroundCount + 1)
-        const width = isForeground ? 70 + (index % 3) * 12 : Math.max(34, 72 - depth * 2.4)
-        const top = isForeground ? 90 - (foregroundCount - 1 - index) * 15 : Math.min(72, 8 + depth * 4.2)
-        const right = isForeground ? (index % 2 === 0 ? 0 : -7) : Math.min(58, 14 + depth * 3.8)
-        const scale = isForeground ? 1 : Math.max(0.48, 0.9 - depth * 0.035)
+        const booksPerStack = 7
+        const stackIndex = Math.floor(index / booksPerStack)
+        const foregroundStack = Math.floor((stackItems.length - 1) / booksPerStack)
+        const positionInStack = index % booksPerStack
+        const isForeground = stackIndex === foregroundStack
+        const depth = foregroundStack - stackIndex
+        const width = isForeground ? 70 + (positionInStack % 3) * 12 : Math.max(36, 76 - depth * 8 - positionInStack * 1.6)
+        const top = isForeground ? 90 - positionInStack * 15 : Math.min(78, 28 + depth * 12 - positionInStack * 2.4)
+        const right = isForeground ? (positionInStack % 2 === 0 ? 0 : -7) : Math.min(60, 14 + depth * 18 + positionInStack * 1.6)
+        const scale = isForeground ? 1 : Math.max(0.55, 0.86 - depth * 0.12)
         const rotate = isForeground
-          ? index % 2 === 0 ? -1.5 : 1.5
-          : depth % 2 === 0 ? -4 : 4
+          ? positionInStack % 2 === 0 ? -1.5 : 1.5
+          : positionInStack % 2 === 0 ? -4 : 4
 
         return (
           <span
@@ -665,7 +734,7 @@ function HeroBookStack({ items }: { items: Item[] }) {
               width: `${width}px`,
               opacity: isForeground ? 1 : Math.max(0.28, 0.72 - depth * 0.03),
               transform: `scale(${scale}) rotate(${rotate}deg)`,
-              zIndex: isForeground ? 40 - index : 20 - depth,
+              zIndex: isForeground ? 40 + positionInStack : 20 - depth,
             }}
           >
             <i />
@@ -782,7 +851,7 @@ function PlanCard({ plan, onPromote }: { plan: PlanItem; onPromote: () => void }
   )
 }
 
-function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void; onProgress: () => void }) {
+function ItemCard({ item, onOpen, onProgress, onDemote }: { item: Item; onOpen: () => void; onProgress: () => void; onDemote: () => void }) {
   const inactiveDays = dateDiff(item.lastActiveAt)
   const warning = item.status === 'active' && inactiveDays >= staleAfterDays
   const progress = getProgress(item)
@@ -817,7 +886,10 @@ function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void
         {item.status !== 'completed' && (
           <div className="quick-actions">
             <button onClick={(event) => { event.stopPropagation(); onProgress() }}>
-              {item.type === 'book' ? '読んだページを記録' : item.type === 'game' ? 'プレー時間を記録' : item.type === 'movie' ? '見たことを記録' : item.type === 'action' ? 'やったことを記録' : '見た話数を記録'}
+              {item.type === 'book' ? '読んだページを記録' : item.type === 'game' ? 'プレイ時間を記録' : item.type === 'movie' ? '見たことを記録' : item.type === 'action' ? 'やったことを記録' : '見た話数を記録'}
+            </button>
+            <button onClick={(event) => { event.stopPropagation(); onDemote() }}>
+              予備軍に戻す
             </button>
           </div>
         )}
@@ -826,7 +898,7 @@ function ItemCard({ item, onOpen, onProgress }: { item: Item; onOpen: () => void
   )
 }
 
-function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onClose: () => void; onProgress: () => void; onDelete: () => void }) {
+function HistorySheet({ item, onClose, onProgress, onDelete, onDemote }: { item: Item; onClose: () => void; onProgress: () => void; onDelete: () => void; onDemote: () => void }) {
   const isBook = item.type === 'book'
   const isGame = item.type === 'game'
   const isMovie = item.type === 'movie'
@@ -858,10 +930,12 @@ function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onC
                   <strong>
                     {log.kind === 'extension'
                       ? `想定を${formatAmount(log.amount)}${unit}延長した`
+                      : log.kind === 'registration'
+                        ? '積みに追加した'
                       : log.kind === 'completion'
-                        ? `${formatAmount(log.amount)}${unit}${isBook ? '読み切った' : isGame ? 'プレーして完了した' : isAction ? 'やり終えた' : '見終えた'}`
+                        ? `${formatAmount(log.amount)}${unit}${isBook ? '読み切った' : isGame ? 'プレイして完了した' : isAction ? 'やり終えた' : '見終えた'}`
                         : log.amount >= 0
-                      ? `${formatAmount(log.amount)}${unit}${isBook ? '読み進めた' : isGame ? 'プレーした' : isAction ? 'やった' : isMovie ? '見た' : '見た'}`
+                      ? `${formatAmount(log.amount)}${unit}${isBook ? '読み進めた' : isGame ? 'プレイした' : isAction ? 'やった' : isMovie ? '見た' : '見た'}`
                       : `${formatAmount(Math.abs(log.amount))}${unit}分、進捗を修正した`}
                   </strong>
                   {log.rating && <span className="history-rating">{formatRating(log.rating)}</span>}
@@ -878,7 +952,12 @@ function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onC
             <span>進捗を記録すると、ここに積み重なります。</span>
           </div>
         )}
-        {item.status !== 'completed' && <button className="primary-button" type="button" onClick={onProgress}>進捗を記録する</button>}
+        {item.status !== 'completed' && (
+          <div className="detail-actions">
+            <button className="primary-button" type="button" onClick={onProgress}>進捗を記録する</button>
+            <button className="secondary-button" type="button" onClick={onDemote}>予備軍に戻す</button>
+          </div>
+        )}
         <button
           className="delete-button"
           type="button"
@@ -888,6 +967,38 @@ function HistorySheet({ item, onClose, onProgress, onDelete }: { item: Item; onC
         >
           <Trash2 size={15} /> この項目を削除する
         </button>
+      </section>
+    </div>
+  )
+}
+
+function AddChoiceSheet({
+  onClose,
+  onAddItem,
+  onAddPlan,
+}: {
+  onClose: () => void
+  onAddItem: () => void
+  onAddPlan: () => void
+}) {
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <section className="sheet add-choice-sheet" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-heading">
+          <div><p className="eyebrow">ADD ITEM</p><h2>追加先を選ぶ</h2></div>
+          <button type="button" className="icon-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="add-choice-actions">
+          <button type="button" onClick={onAddItem}>
+            <Plus size={18} />
+            <span><strong>積みに登録</strong><small>すぐ進めたい作品や行動を追加します</small></span>
+          </button>
+          <button type="button" onClick={onAddPlan}>
+            <Library size={18} />
+            <span><strong>予備軍に追加</strong><small>いつか触れたい候補として置いておきます</small></span>
+          </button>
+        </div>
       </section>
     </div>
   )
@@ -954,7 +1065,7 @@ function AddSheet({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Omit<
             <span className="field-hint">{type === 'book' ? '本の総ページ数を入力してください' : type === 'game' ? 'クリアまでにかかりそうな時間を入力してください' : '作品の全話数を入力してください'}</span>
           </label>
         )}
-        <label>{isMovie || isAction ? '追加日' : '購入日'}<input type="date" value={purchasedAt} onChange={(event) => setPurchasedAt(event.target.value)} /></label>
+        <label>登録日<input type="date" value={purchasedAt} onChange={(event) => setPurchasedAt(event.target.value)} /></label>
         <fieldset className="cover-picker">
           <legend>色</legend>
           <div>
@@ -1147,7 +1258,7 @@ function ProgressSheet({
             <span>評価と一言メモを残せます。</span>
           </div>
         ) : (
-          <label>{mode === 'extension' ? `どれだけ延長しますか？` : completeRequested ? '完了として記録します' : isBook ? '何ページまで読みましたか？' : isGame ? '今日、何時間プレーしましたか？' : '何話まで見ましたか？'}
+          <label>{mode === 'extension' ? `どれだけ延長しますか？` : completeRequested ? '完了として記録します' : isBook ? '何ページまで読みましたか？' : isGame ? '今日、何時間プレイしましたか？' : '何話まで見ましたか？'}
             <input
               type="number"
               min="0"
