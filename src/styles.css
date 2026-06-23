@@ -103,6 +103,23 @@ h2 { font-size: 21px; }
   border-radius: 999px;
   background: rgba(255,255,255,.36);
 }
+.stack-overflow {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 7px;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 999px;
+  color: #f8f6ef;
+  background: rgba(255,255,255,.1);
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+}
 
 .stats-grid {
   display: grid;

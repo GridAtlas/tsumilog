@@ -263,6 +263,59 @@ function dateDiff(date?: string) {
   return Math.max(0, Math.floor((today.getTime() - from.getTime()) / DAY))
 }
 
+function dateTime(date?: string) {
+  return date ? new Date(`${date}T00:00:00`).getTime() : 0
+}
+
+function getLatestItemTime(item: Item) {
+  const latestHistoryTime = item.history.reduce((latest, log) => Math.max(latest, dateTime(log.date)), 0)
+  return Math.max(dateTime(item.lastActiveAt), dateTime(item.purchasedAt), latestHistoryTime)
+}
+
+function sortItemsByLatestActivity(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const latestTimeDiff = getLatestItemTime(b) - getLatestItemTime(a)
+    return latestTimeDiff || b.id - a.id
+  })
+}
+
+function sortItemsByRegistration(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const registrationTimeDiff = dateTime(a.purchasedAt) - dateTime(b.purchasedAt)
+    return registrationTimeDiff || a.id - b.id
+  })
+}
+
+function getAttentionDays(item: Item) {
+  return item.status === 'unstarted' ? dateDiff(item.purchasedAt) : dateDiff(item.lastActiveAt)
+}
+
+function sortItemsByAttention(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const attentionDiff = getAttentionDays(b) - getAttentionDays(a)
+    return attentionDiff || getLatestItemTime(a) - getLatestItemTime(b) || a.id - b.id
+  })
+}
+
+function sortItemsByCompletion(items: Item[]) {
+  return [...items].sort((a, b) => {
+    const completionTimeDiff = dateTime(b.completedAt) - dateTime(a.completedAt)
+    return completionTimeDiff || getLatestItemTime(b) - getLatestItemTime(a) || b.id - a.id
+  })
+}
+
+function sortPlanItemsByTiming(plans: PlanItem[]) {
+  return [...plans].sort((a, b) => {
+    if (a.plannedAt && b.plannedAt) {
+      const plannedTimeDiff = dateTime(a.plannedAt) - dateTime(b.plannedAt)
+      return plannedTimeDiff || dateTime(a.createdAt) - dateTime(b.createdAt) || a.id - b.id
+    }
+    if (a.plannedAt) return -1
+    if (b.plannedAt) return 1
+    return dateTime(a.createdAt) - dateTime(b.createdAt) || a.id - b.id
+  })
+}
+
 function daysUntil(date: string) {
   const target = new Date(`${date}T00:00:00`)
   const today = new Date()
@@ -361,37 +414,68 @@ function App() {
 
   const alerts = useMemo(
     () =>
-      items.filter((item) => {
-        if (item.status === 'completed') return false
-        if (item.status === 'unstarted') return true
-        return dateDiff(item.lastActiveAt) >= staleAfterDays
-      }),
+      sortItemsByAttention(
+        items.filter((item) => {
+          if (item.status === 'completed') return false
+          if (item.status === 'unstarted') return true
+          return dateDiff(item.lastActiveAt) >= staleAfterDays
+        }),
+      ),
     [items],
   )
-  const planAlerts = useMemo(() => planItems.filter(isPlanAlert), [planItems])
+  const planAlerts = useMemo(() => sortPlanItemsByTiming(planItems.filter(isPlanAlert)), [planItems])
   const alertCount = alerts.length + planAlerts.length
+  const heroRecommendation = useMemo(() => {
+    const overduePlan = planAlerts.find((plan) => plan.plannedAt && daysUntil(plan.plannedAt) < 0)
+    if (overduePlan) {
+      return {
+        title: overduePlan.title,
+        message: '開始予定を過ぎています',
+      }
+    }
+    if (alerts[0]) {
+      return {
+        title: alerts[0].title,
+        message: alerts[0].status === 'unstarted' ? 'そろそろ始めませんか？' : '少しだけでも進めませんか？',
+        item: alerts[0],
+      }
+    }
+    if (planAlerts[0]) {
+      return {
+        title: planAlerts[0].title,
+        message: '開始予定が近づいています',
+      }
+    }
+    return null
+  }, [alerts, planAlerts])
 
   const visibleItems = useMemo(
-    () =>
-      items.filter((item) => {
+    () => {
+      const filteredItems = items.filter((item) => {
         const matchesFilter = selectedTypes.length === 0 || selectedTypes.includes(item.type)
         const matchesQuery = `${item.title} ${item.subtitle}`.toLowerCase().includes(query.toLowerCase())
         const matchesTab = tab !== 'alerts' || alerts.some((alert) => alert.id === item.id)
         const matchesLibrarySection = tab !== 'library' || (librarySection === 'active' ? item.status !== 'completed' : librarySection === 'completed' && item.status === 'completed')
         return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
-      }),
+      })
+      return tab === 'library' && librarySection === 'completed'
+        ? sortItemsByCompletion(filteredItems)
+        : sortItemsByLatestActivity(filteredItems)
+    },
     [alerts, items, librarySection, query, selectedTypes, tab],
   )
   const visiblePlanItems = useMemo(
     () =>
       (tab === 'library' || tab === 'alerts'
-        ? planItems.filter((plan) => {
-          const matchesFilter = selectedTypes.length === 0 || selectedTypes.includes(plan.type)
-          const matchesQuery = `${plan.title} ${plan.subtitle}`.toLowerCase().includes(query.toLowerCase())
-          const matchesTab = tab !== 'alerts' || planAlerts.some((alert) => alert.id === plan.id)
-          const matchesLibrarySection = tab !== 'library' || librarySection === 'plan'
-          return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
-        })
+        ? sortPlanItemsByTiming(
+          planItems.filter((plan) => {
+            const matchesFilter = selectedTypes.length === 0 || selectedTypes.includes(plan.type)
+            const matchesQuery = `${plan.title} ${plan.subtitle}`.toLowerCase().includes(query.toLowerCase())
+            const matchesTab = tab !== 'alerts' || planAlerts.some((alert) => alert.id === plan.id)
+            const matchesLibrarySection = tab !== 'library' || librarySection === 'plan'
+            return matchesFilter && matchesQuery && matchesTab && matchesLibrarySection
+          }),
+        )
         : []),
     [librarySection, planAlerts, planItems, query, selectedTypes, tab],
   )
@@ -573,12 +657,12 @@ function App() {
               <div className="hero-copy">
                 <span className="hero-icon"><Sparkles size={17} /></span>
                 <p>今日のひと押し</p>
-                <h2>{alerts[0]?.title ?? planAlerts[0]?.title ?? '積みはありません'}</h2>
-                <span>{alerts[0] ? '少しだけでも進めませんか？' : planAlerts[0] ? '開始予定が近づいています' : 'この調子で楽しみましょう'}</span>
+                <h2>{heroRecommendation?.title ?? '積みはありません'}</h2>
+                <span>{heroRecommendation?.message ?? 'この調子で楽しみましょう'}</span>
               </div>
               <HeroBookStack items={items} />
-              {alerts[0] && (
-                <button className="hero-action" onClick={() => setProgressItem(alerts[0])}>
+              {heroRecommendation?.item && (
+                <button className="hero-action" onClick={() => setProgressItem(heroRecommendation.item)}>
                   進捗を記録 <ChevronRight size={16} />
                 </button>
               )}
@@ -711,8 +795,13 @@ function App() {
 }
 
 function HeroBookStack({ items }: { items: Item[] }) {
+  const booksPerStack = 7
+  const maxStacks = 3
+  const maxBooks = booksPerStack * maxStacks
+  const activeStackItems = sortItemsByRegistration(items.filter((item) => item.status !== 'completed'))
+  const hiddenCount = Math.max(0, activeStackItems.length - maxBooks)
   const stackItems = items.length
-    ? items.filter((item) => item.status !== 'completed').concat(items.filter((item) => item.status === 'completed')).slice(0, 22)
+    ? activeStackItems.slice(-maxBooks)
     : [
       { id: 1, cover: 'cover-orange' },
       { id: 2, cover: 'cover-blue' },
@@ -723,37 +812,33 @@ function HeroBookStack({ items }: { items: Item[] }) {
   return (
     <div className="book-stack" aria-hidden="true">
       {stackItems.map((item, index) => {
-        const booksPerStack = 7
         const stackIndex = Math.floor(index / booksPerStack)
-        const foregroundStack = Math.floor((stackItems.length - 1) / booksPerStack)
         const positionInStack = index % booksPerStack
-        const isForeground = stackIndex === foregroundStack
-        const depth = foregroundStack - stackIndex
-        const width = isForeground ? 70 + (positionInStack % 3) * 12 : Math.max(36, 76 - depth * 8 - positionInStack * 1.6)
-        const top = isForeground ? 90 - positionInStack * 15 : Math.min(78, 28 + depth * 12 - positionInStack * 2.4)
-        const right = isForeground ? (positionInStack % 2 === 0 ? 0 : -7) : Math.min(60, 14 + depth * 18 + positionInStack * 1.6)
-        const scale = isForeground ? 1 : Math.max(0.55, 0.86 - depth * 0.12)
-        const rotate = isForeground
-          ? positionInStack % 2 === 0 ? -1.5 : 1.5
-          : positionInStack % 2 === 0 ? -4 : 4
+        const stackCount = Math.max(1, Math.ceil(stackItems.length / booksPerStack))
+        const stackOffset = maxStacks - stackCount
+        const left = (stackIndex + stackOffset) * 39 + (positionInStack % 2 === 0 ? 0 : 3)
+        const top = 101 - positionInStack * 14
+        const width = 43 + (positionInStack % 3) * 6
+        const rotate = positionInStack % 2 === 0 ? -1.4 : 1.4
 
         return (
           <span
             key={item.id}
             className={`stack-book ${item.cover}`}
             style={{
+              left: `${left}px`,
               top: `${top}px`,
-              right: `${right}px`,
               width: `${width}px`,
-              opacity: isForeground ? 1 : Math.max(0.28, 0.72 - depth * 0.03),
-              transform: `scale(${scale}) rotate(${rotate}deg)`,
-              zIndex: isForeground ? 40 + positionInStack : 20 - depth,
+              opacity: 1,
+              transform: `rotate(${rotate}deg)`,
+              zIndex: stackIndex * booksPerStack + positionInStack,
             }}
           >
             <i />
           </span>
         )
       })}
+      {hiddenCount > 0 && <span className="stack-overflow">+{hiddenCount}</span>}
     </div>
   )
 }
